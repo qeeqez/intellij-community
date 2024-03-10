@@ -1,27 +1,25 @@
-// Copyright 2000-2022 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit.references
 
 import com.intellij.codeInsight.lookup.AutoCompletionPolicy
 import com.intellij.codeInsight.lookup.LookupElementBuilder
 import com.intellij.codeInspection.reference.PsiMemberReference
-import com.intellij.lang.jvm.JvmMethod
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.*
 import com.intellij.psi.search.searches.ClassInheritorsSearch
 import com.intellij.psi.util.ClassUtil
 import com.intellij.psi.util.InheritanceUtil
 import com.intellij.psi.util.PsiUtil
-import com.intellij.util.SmartList
 import org.jetbrains.uast.*
 
 abstract class BaseJunitAnnotationReference(
   element: PsiLanguageInjectionHost
 ) : PsiReferenceBase<PsiLanguageInjectionHost>(element, false), PsiMemberReference {
   override fun bindToElement(element: PsiElement): PsiElement {
-    if (element is PsiMethod) {
-      return handleElementRename(element.name)
+    return when (element) {
+      is PsiMethod -> handleElementRename(element.name)
+      else -> super.bindToElement(element)
     }
-    return super.bindToElement(element)
   }
 
   override fun handleElementRename(newElementName: String): PsiElement {
@@ -37,13 +35,13 @@ abstract class BaseJunitAnnotationReference(
     val myLiteral = getElement().toUElement(UExpression::class.java) ?: return false
     val uMethod = element.toUElement(UMethod::class.java) ?: return false
     val method = uMethod.javaPsi
-    val methodName = myLiteral.evaluate() as String? ?: return false
+    val methodName = myLiteral.evaluate() as? String ?: return false
     val shortName = StringUtil.getShortName(methodName, '#')
     if (shortName != method.name) return false
     val methodClass = method.containingClass ?: return false
     if (method.hasModifierProperty(PsiModifier.STATIC)) {
       val className = StringUtil.getPackageName(methodName, '#')
-      if (!className.isEmpty()) {
+      if (className.isNotEmpty()) {
         return className == ClassUtil.getJVMClassName(methodClass)
       }
     }
@@ -54,50 +52,58 @@ abstract class BaseJunitAnnotationReference(
   }
 
   override fun resolve(): PsiElement? {
-    val myLiteral = element.toUElement(UExpression::class.java) ?: return null
-    val literalClazz = myLiteral.getParentOfType(UClass::class.java) ?: return null
-    val literalMethod = myLiteral.getParentOfType(UMethod::class.java)
-    var methodName = myLiteral.evaluate() as String? ?: return null
-    val className = StringUtil.getPackageName(methodName, '#')
-    var psiClazz = literalClazz.javaPsi
-    if (!className.isEmpty()) {
+    val literalExpressionToFind = element.toUElement(UExpression::class.java) ?: return null
+
+    val containingMethod = literalExpressionToFind.getParentOfType(UMethod::class.java)
+                           ?: return null
+
+    return findReferencedMethod(literalExpressionToFind, containingMethod)
+  }
+
+  private fun findReferencedMethod(expressionToFind: UExpression, containingMethod: UMethod): PsiElement? {
+    val containingClass = containingMethod.getParentOfType(UClass::class.java) ?: return null
+    var psiClazz = containingClass.javaPsi
+
+    var methodNameToFind = expressionToFind.evaluate() as? String ?: return null
+
+    val className = StringUtil.getPackageName(methodNameToFind, '#')
+    if (className.isNotEmpty()) {
       val aClass = ClassUtil.findPsiClass(psiClazz.manager, className, null, false, psiClazz.resolveScope)
       if (aClass != null) {
         psiClazz = aClass
-        methodName = StringUtil.getShortName(methodName, '#')
+        methodNameToFind = StringUtil.getShortName(methodNameToFind, '#')
       }
     }
-    val finalMethodName = methodName
-    var clazzMethods = psiClazz.findMethodsByName(methodName, true)
-    if (clazzMethods.isEmpty()) {
-      val classes = psiClazz.innerClasses
-      val methodsInner = SmartList<JvmMethod>()
-      for (cl in classes) {
-        val name = cl.findMethodsByName(finalMethodName)
-        if (name.isNotEmpty()) {
-          methodsInner.addAll(listOf(*name))
-        }
-      }
-      if (methodsInner.size > 0) {
-        clazzMethods = methodsInner.mapNotNull { method -> method as? PsiMethod? }.toTypedArray()
-      }
-    }
+
+    var clazzMethods = findMethods(psiClazz, methodNameToFind)
+    if (clazzMethods.isEmpty()) clazzMethods = psiClazz.innerClasses.flatMap { findMethods(it, methodNameToFind) }
     if (clazzMethods.isEmpty() && (psiClazz.isInterface || PsiUtil.isAbstractClass(psiClazz))) {
       return ClassInheritorsSearch.search(psiClazz, psiClazz.resolveScope, false)
-               .mapNotNull { aClazz ->
-                 val methods = aClazz.findMethodsByName(finalMethodName, false)
-                 filteredMethod(methods, literalClazz, literalMethod)
-               }
-               .map { method -> PsiElementResolveResult(method) }
-               .firstOrNull()?.element ?: return null
+        .mapNotNull { findMethods(it, methodNameToFind, false) }
+        .mapNotNull { filteredMethod(it, containingClass, containingMethod) }
+        .map { PsiElementResolveResult(it) }
+        .firstOrNull()?.element
     }
-    return filteredMethod(clazzMethods, literalClazz, literalMethod)
+
+    return filteredMethod(clazzMethods, containingClass, containingMethod)
   }
 
-  private fun filteredMethod(clazzMethods: Array<PsiMethod>, uClass: UClass, uMethod: UMethod?): PsiMethod? {
-    return clazzMethods.firstOrNull { method ->
-      hasNoStaticProblem(method, uClass, uMethod)
-    } ?: if (clazzMethods.isEmpty()) null else clazzMethods.first()
+  private fun findMethods(psiClass: PsiClass, methodName: String, checkBase: Boolean = true): List<PsiMethod> {
+    return psiClass.findMethodsByName(methodName, checkBase).filterNotNull()
+  }
+
+  /**
+   * Filters the given list of methods to return a method that has no static problems.
+   * If no such method exists, returns the first method in the list.
+   *
+   * @param methods List of methods to filter.
+   * @param containingClass The UClass object representing the class containing the methods.
+   * @param containingMethod The UMethod object representing the method that contains the annotation, can be null if the annotation is class-level.
+   * @return A PsiMethod object that has no static problems or the first method in the list if none exists.
+   */
+  private fun filteredMethod(methods: List<PsiMethod>, containingClass: UClass, containingMethod: UMethod?): PsiMethod? {
+    return methods.firstOrNull { hasNoStaticProblem(it, containingClass, containingMethod) }
+           ?: methods.firstOrNull()
   }
 
   override fun getVariants(): Array<Any> {
