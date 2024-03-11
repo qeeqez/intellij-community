@@ -8,7 +8,6 @@ import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.*
 import com.intellij.psi.search.searches.ClassInheritorsSearch
 import com.intellij.psi.util.ClassUtil
-import com.intellij.psi.util.InheritanceUtil
 import com.intellij.psi.util.PsiUtil
 import org.jetbrains.uast.*
 
@@ -29,26 +28,6 @@ abstract class BaseJunitAnnotationReference(
       element.manager, className, null, false, element.resolveScope
     ) == null
     return super.handleElementRename(if (selfClassReference) newElementName else "$className#$newElementName")
-  }
-
-  override fun isReferenceTo(element: PsiElement): Boolean {
-    val myLiteral = getElement().toUElement(UExpression::class.java) ?: return false
-    val uMethod = element.toUElement(UMethod::class.java) ?: return false
-    val method = uMethod.javaPsi
-    val methodName = myLiteral.evaluate() as? String ?: return false
-    val shortName = StringUtil.getShortName(methodName, '#')
-    if (shortName != method.name) return false
-    val methodClass = method.containingClass ?: return false
-    if (method.hasModifierProperty(PsiModifier.STATIC)) {
-      val className = StringUtil.getPackageName(methodName, '#')
-      if (className.isNotEmpty()) {
-        return className == ClassUtil.getJVMClassName(methodClass)
-      }
-    }
-    val literalClazz = myLiteral.getParentOfType(UClass::class.java) ?: return false
-    val psiClazz = literalClazz.javaPsi
-    return InheritanceUtil.isInheritorOrSelf(psiClazz, methodClass, true) ||
-           InheritanceUtil.isInheritorOrSelf(methodClass, psiClazz, true)
   }
 
   override fun resolve(): PsiElement? {
