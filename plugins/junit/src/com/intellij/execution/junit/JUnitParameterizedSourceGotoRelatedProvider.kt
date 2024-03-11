@@ -13,12 +13,14 @@ import kotlin.streams.asSequence
 
 class JUnitParameterizedSourceGotoRelatedProvider : GotoRelatedProvider() {
   override fun getItems(psiElement: PsiElement): List<GotoRelatedItem> {
-    val uElement = psiElement.parent.toUElementOfType<UMethod>() ?: return emptyList()
-    val javaMethod = uElement.javaPsi
-    return findGoToValues(javaMethod)
+    val uElement = psiElement.parent.toUElementOfType<UElement>() ?: return emptyList()
+    return when (val javaMethodOrAnnotation = uElement.javaPsi) {
+      is PsiMember -> findGoToValues(javaMethodOrAnnotation)
+      else -> return emptyList()
+    }
   }
 
-  private fun findGoToValues(currentElement: PsiMethod): List<GotoRelatedItem> {
+  private fun findGoToValues(currentElement: PsiMember): List<GotoRelatedItem> {
     return MetaAnnotationUtil.findMetaAnnotations(
       currentElement,
       setOf(JUnitCommonClassNames.ORG_JUNIT_JUPITER_PARAMS_PROVIDER_METHOD_SOURCE)
@@ -29,7 +31,7 @@ class JUnitParameterizedSourceGotoRelatedProvider : GotoRelatedProvider() {
       .toList()
   }
 
-  private fun findPointingMethods(currentElement: PsiMethod, annotation: PsiAnnotation): List<PsiMethod> {
+  private fun findPointingMethods(currentElement: PsiMember, annotation: PsiAnnotation): List<PsiMethod> {
     val annotationMemberValue = annotation.flattenedAttributeValues("value")
     val containingClass = currentElement.containingClass ?: return emptyList()
 

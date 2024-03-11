@@ -54,14 +54,15 @@ abstract class BaseJunitAnnotationReference(
   override fun resolve(): PsiElement? {
     val literalExpressionToFind = element.toUElement(UExpression::class.java) ?: return null
 
-    val containingMethod = literalExpressionToFind.getParentOfType(UMethod::class.java)
-                           ?: return null
+    val containingMethodOrAnnotation = literalExpressionToFind.getParentOfType(UMethod::class.java)
+                                       ?: literalExpressionToFind.getParentOfType(UClass::class.java)
+                                       ?: return null
 
-    return findReferencedMethod(literalExpressionToFind, containingMethod)
+    return findReferencedMethod(literalExpressionToFind, containingMethodOrAnnotation)
   }
 
-  private fun findReferencedMethod(expressionToFind: UExpression, containingMethod: UMethod): PsiElement? {
-    val containingClass = containingMethod.getParentOfType(UClass::class.java) ?: return null
+  private fun findReferencedMethod(expressionToFind: UExpression, containingElement: UElement): PsiElement? {
+    val containingClass = containingElement.getParentOfType(UClass::class.java) ?: return null
     var psiClazz = containingClass.javaPsi
 
     var methodNameToFind = expressionToFind.evaluate() as? String ?: return null
@@ -80,12 +81,12 @@ abstract class BaseJunitAnnotationReference(
     if (clazzMethods.isEmpty() && (psiClazz.isInterface || PsiUtil.isAbstractClass(psiClazz))) {
       return ClassInheritorsSearch.search(psiClazz, psiClazz.resolveScope, false)
         .mapNotNull { findMethods(it, methodNameToFind, false) }
-        .mapNotNull { filteredMethod(it, containingClass, containingMethod) }
+        .mapNotNull { filteredMethod(it, containingClass, containingElement) }
         .map { PsiElementResolveResult(it) }
         .firstOrNull()?.element
     }
 
-    return filteredMethod(clazzMethods, containingClass, containingMethod)
+    return filteredMethod(clazzMethods, containingClass, containingElement)
   }
 
   private fun findMethods(psiClass: PsiClass, methodName: String, checkBase: Boolean = true): List<PsiMethod> {
@@ -98,11 +99,11 @@ abstract class BaseJunitAnnotationReference(
    *
    * @param methods List of methods to filter.
    * @param containingClass The UClass object representing the class containing the methods.
-   * @param containingMethod The UMethod object representing the method that contains the annotation, can be null if the annotation is class-level.
+   * @param containingElement The UElement object representing the method or annotation that contains the annotation, can be null if the annotation is class-level.
    * @return A PsiMethod object that has no static problems or the first method in the list if none exists.
    */
-  private fun filteredMethod(methods: List<PsiMethod>, containingClass: UClass, containingMethod: UMethod?): PsiMethod? {
-    return methods.firstOrNull { hasNoStaticProblem(it, containingClass, containingMethod) }
+  private fun filteredMethod(methods: List<PsiMethod>, containingClass: UClass, containingElement: UElement?): PsiMethod? {
+    return methods.firstOrNull { hasNoStaticProblem(it, containingClass, containingElement) }
            ?: methods.firstOrNull()
   }
 
@@ -127,8 +128,8 @@ abstract class BaseJunitAnnotationReference(
   /**
    * @param method method referenced from within JUnit annotation
    * @param literalClazz the class where the annotation is located
-   * @param literalMethod the JUnit annotated method, is null in case the annotation is class-level
+   * @param literalElement the JUnit annotated method or annotation. Is null in case the annotation is class-level
    * @return true in case static check is successful
    */
-  protected abstract fun hasNoStaticProblem(method: PsiMethod, literalClazz: UClass, literalMethod: UMethod?): Boolean
+  protected abstract fun hasNoStaticProblem(method: PsiMethod, literalClazz: UClass, literalElement: UElement?): Boolean
 }

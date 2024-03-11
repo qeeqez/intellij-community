@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit.codeInspection
 
 import com.intellij.junit.testFramework.JUnitParameterizedSourceGoToRelatedTestBase
@@ -40,6 +40,30 @@ class JavaJUnitParameterizedSourceGoToRelatedTest : JUnitParameterizedSourceGoTo
       val element = item.element as? PsiMethod
       assertNotNull(element)
       assertEquals("abc", element?.name)
+      assertEquals(0, element?.parameters?.size)
+    }
+  }
+
+  fun `test go to method source from external annotation`() {
+    myFixture.testGoToRelatedAction(JvmLanguage.JAVA, """
+      class Test {
+        @ExternalAnnotationTest
+        public void a<caret>bc(Integer i) { }
+      
+      	@Retention(RetentionPolicy.RUNTIME)
+      	@Target(ElementType.METHOD)
+      	@org.junit.jupiter.params.ParameterizedTest
+        @org.junit.jupiter.params.provider.MethodSource("foo")
+        public @interface ExternalAnnotationTest { }
+      
+        public static List<Integer> foo() {
+          return List.of(1, 2, 3);
+        }
+      }
+    """.trimIndent()) { item ->
+      val element = item.element as? PsiMethod
+      assertNotNull(element)
+      assertEquals("foo", element?.name)
       assertEquals(0, element?.parameters?.size)
     }
   }

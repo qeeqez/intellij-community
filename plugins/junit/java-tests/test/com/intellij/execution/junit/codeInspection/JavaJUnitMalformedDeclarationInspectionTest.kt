@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit.codeInspection
 
 import com.intellij.junit.testFramework.JUnitMalformedDeclarationInspectionTestBase
@@ -308,6 +308,38 @@ class JavaJUnitMalformedDeclarationInspectionTest {
         @org.junit.jupiter.params.ParameterizedTest
         @org.junit.jupiter.params.provider.NullSource
         void testWithNullSrc(Object o) { }      
+      }
+    """.trimIndent()
+      )
+    }
+    fun `test malformed parameterized method source on annotation no highlighting`() {
+      myFixture.testHighlighting(JvmLanguage.JAVA, """     
+      class MyTest {
+        @ExternalAnnotationTest
+        void testExternalAnnotation(String input) { }
+      
+      	@java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+      	@java.lang.annotation.Target(java.lang.annotation.ElementType.METHOD)
+      	@org.junit.jupiter.params.ParameterizedTest
+      	@org.junit.jupiter.params.provider.MethodSource("stream")
+      	@interface ExternalAnnotationTest { }
+      
+        static java.util.stream.Stream<Integer> stream() { return java.util.stream.Stream.of(1, 2, 3); }
+      }
+    """.trimIndent()
+      )
+    }
+    fun `test malformed parameterized method source on annotation cannot resolve target highlighting`() {
+      myFixture.testHighlighting(JvmLanguage.JAVA, """     
+      class MyTest {
+        @ExternalAnnotationTest
+        void <error descr="Cannot resolve target method source: 'stream'">testExternalAnnotation</error>(String input) { }
+      
+      	@java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.RUNTIME)
+      	@java.lang.annotation.Target(java.lang.annotation.ElementType.METHOD)
+      	@org.junit.jupiter.params.ParameterizedTest
+      	@org.junit.jupiter.params.provider.MethodSource("stream")
+      	@interface ExternalAnnotationTest { }
       }
     """.trimIndent()
       )
