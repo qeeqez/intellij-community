@@ -7,15 +7,18 @@ import com.intellij.codeInsight.MetaAnnotationUtil
 import com.intellij.codeInsight.daemon.impl.analysis.JavaGenericsUtil
 import com.intellij.codeInsight.intention.FileModifier.SafeFieldForPreview
 import com.intellij.codeInsight.intention.IntentionAction
+import com.intellij.codeInsight.intention.QuickFixFactory
 import com.intellij.codeInsight.options.JavaClassValidator
 import com.intellij.codeInspection.*
 import com.intellij.codeInspection.options.OptPane
 import com.intellij.codeInspection.options.OptPane.pane
 import com.intellij.codeInspection.options.OptPane.stringList
 import com.intellij.codeInspection.util.InspectionMessage
+import com.intellij.debugger.engine.JVMNameUtil
 import com.intellij.execution.JUnitBundle
 import com.intellij.execution.junit.*
 import com.intellij.execution.junit.references.MethodSourceReference
+import com.intellij.ide.starters.shared.KOTLIN_STARTER_LANGUAGE
 import com.intellij.jvm.analysis.quickFix.CompositeModCommandQuickFix
 import com.intellij.jvm.analysis.quickFix.createModifierQuickfixes
 import com.intellij.lang.Language
@@ -23,6 +26,7 @@ import com.intellij.lang.jvm.JvmMethod
 import com.intellij.lang.jvm.JvmModifier
 import com.intellij.lang.jvm.JvmModifiersOwner
 import com.intellij.lang.jvm.actions.*
+import com.intellij.lang.jvm.annotation.JvmAnnotationAttribute
 import com.intellij.lang.jvm.types.JvmPrimitiveTypeKind
 import com.intellij.lang.jvm.types.JvmType
 import com.intellij.modcommand.ModPsiUpdater
@@ -30,9 +34,11 @@ import com.intellij.openapi.module.ModuleUtilCore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ModuleRootManager
 import com.intellij.openapi.util.NlsSafe
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.psi.*
 import com.intellij.psi.CommonClassNames.*
 import com.intellij.psi.impl.source.resolve.reference.impl.providers.FileReference
+import com.intellij.psi.impl.source.tree.java.PsiLiteralExpressionImpl
 import com.intellij.psi.impl.source.tree.java.PsiNameValuePairImpl
 import com.intellij.psi.search.searches.ClassInheritorsSearch
 import com.intellij.psi.util.*
@@ -545,7 +551,7 @@ private class JUnitMalformedSignatureVisitor(
       val foundMethod = containingClass.findMethodsByName(method.name, true).singleOrNull { it.parameters.isEmpty() }
       val uFoundMethod = foundMethod.toUElementOfType<UMethod>()
       return if (uFoundMethod != null) {
-        checkSourceProvider(uFoundMethod, containingClass, methodSource, method)
+        checkSourceProvider(uFoundMethod, containingClass, methodSource, null, method)
       }
       else {
         checkAbsentSourceProvider(containingClass, methodSource, method.name, method)
@@ -562,7 +568,7 @@ private class JUnitMalformedSignatureVisitor(
             else {
               val sourceProvider: PsiMethod = resolve
               val uSourceProvider = sourceProvider.toUElementOfType<UMethod>() ?: return
-              return checkSourceProvider(uSourceProvider, containingClass, attributeValue, method)
+              return checkSourceProvider(uSourceProvider, containingClass, methodSource, attributeValue as PsiLiteralExpression, method)
             }
           }
         }
@@ -595,10 +601,15 @@ private class JUnitMalformedSignatureVisitor(
     }
   }
 
-  private fun checkSourceProvider(sourceProvider: UMethod, containingClass: PsiClass?, attributeValue: PsiElement, method: UMethod) {
+  private fun checkSourceProvider(sourceProvider: UMethod, containingClass: PsiClass?, attributeValue: PsiAnnotation, literal: PsiLiteralExpression?, method: UMethod) {
     val place = (if (method.javaPsi.isAncestor(attributeValue, true)) attributeValue
     else method.javaPsi.nameIdentifier ?: method.javaPsi).toUElement()?.sourcePsi ?: return
     val providerName = sourceProvider.name
+
+    val isNested = sourceProvider.javaPsi.containingClass?.containingClass != null
+    val methodClass = sourceProvider.javaPsi.containingClass
+    var fullClassName = ClassUtil.getJVMClassName(methodClass!!) + "#" + sourceProvider.name
+
     if (!sourceProvider.isStatic &&
         containingClass != null && !TestUtils.testInstancePerClass(containingClass) &&
         !implementationsTestInstanceAnnotated(containingClass)
@@ -619,8 +630,24 @@ private class JUnitMalformedSignatureVisitor(
       }
       actions.addAll(createModifierActions(sourceProvider, modifierRequest(JvmModifier.STATIC, true)))
       val quickFixes = IntentionWrapper.wrapToQuickFixes(actions, sourceProvider.javaPsi.containingFile).toTypedArray()
-      val message = JUnitBundle.message("jvm.inspections.junit.malformed.param.method.source.static.descriptor",
-                                              providerName)
+      val message = JUnitBundle.message(
+        "jvm.inspections.junit.malformed.param.method.source.static.descriptor", providerName)
+      holder.registerProblem(place, message, *quickFixes)
+    }
+    else if (isNested && fullClassName != literal?.value) {
+      if (methodClass.language == Language.findLanguageByID("kotlin")) {
+        fullClassName = fullClassName.replace("$", "\\$")
+      }
+      val actions = createChangeAnnotationAttributeActions(
+        attributeValue,
+        0,
+        stringAttribute(PsiAnnotation.DEFAULT_REFERENCED_METHOD_NAME, fullClassName),
+        JUnitBundle.message("jvm.inspections.junit5.assertions.converter.quickfix", fullClassName),
+        JUnitBundle.message("jvm.inspections.junit5.assertions.converter.familyName")
+      )
+      val quickFixes = IntentionWrapper.wrapToQuickFixes(actions, sourceProvider.javaPsi.containingFile).toTypedArray()
+      val message = JUnitBundle.message(
+        "jvm.inspections.junit.malformed.param.method.source.external.class.descriptor", providerName)
       holder.registerProblem(place, message, *quickFixes)
     }
     else if (sourceProvider.uastParameters.isNotEmpty() && !classHasParameterResolverField(containingClass)) {

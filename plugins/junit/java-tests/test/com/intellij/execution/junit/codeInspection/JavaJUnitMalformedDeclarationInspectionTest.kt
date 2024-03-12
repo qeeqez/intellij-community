@@ -575,6 +575,63 @@ class JavaJUnitMalformedDeclarationInspectionTest {
       }        
     """.trimIndent())
     }
+    fun `test malformed parameterized method source external class highlighting`() {
+      myFixture.testHighlighting(JvmLanguage.JAVA, """
+      package com.intellij.testframework.ext;
+        
+      import org.junit.jupiter.params.ParameterizedTest;
+      import org.junit.jupiter.params.provider.MethodSource;
+      import java.util.stream.Stream;
+        
+      class ValueSourcesTest {       
+        @ParameterizedTest
+        @MethodSource("a")
+        void simple(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource("com.intellij.testframework.ext.ValueSourcesTest#a")
+        void simpleClass(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource({ <error descr="Method source 'b' in external class must be referenced by fully-qualified method name">"b"</error> })
+        void nested(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource({ <error descr="Method source 'b' in external class must be referenced by fully-qualified method name">"com.intellij.testframework.ext.ValueSourcesTest#b"</error> })
+        void nestedClass(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource("com.intellij.testframework.ext.ValueSourcesTest${'\$'}NestedClass#b")
+        void nestedClassFull(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource({ <error descr="Cannot resolve target method source: 'c'">"c"</error> })
+        void nestedNested(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource({ <error descr="Cannot resolve target method source: 'com.intellij.testframework.ext.ValueSourcesTest#c'">"com.intellij.testframework.ext.ValueSourcesTest#c"</error> })
+        void nestedNestedClass(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource({ <error descr="Method source 'c' in external class must be referenced by fully-qualified method name">"com.intellij.testframework.ext.ValueSourcesTest${'\$'}NestedClass#c"</error> })
+        void nestedNestedClassNotFull(String param) { }
+      
+        @ParameterizedTest
+        @MethodSource("com.intellij.testframework.ext.ValueSourcesTest${'\$'}NestedClass${'\$'}NestedNested#c")
+        void nestedNestedClassFull(String param) { }
+      
+        static Stream<String> a() { return Stream.of("a", "b"); }
+      
+        class NestedClass {
+          static Stream<String> b() { return Stream.of("a", "b"); }
+          
+          class NestedNested {
+            static Stream<String> c() { return Stream.of("a", "b"); }
+          }
+        }
+      }        
+    """.trimIndent())
+    }
     fun `test malformed parameterized method source should have no parameters highlighting`() {
       myFixture.testHighlighting(JvmLanguage.JAVA, """
       class ValueSourcesTest {       

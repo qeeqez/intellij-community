@@ -1,4 +1,4 @@
-// Copyright 2000-2023 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Copyright 2000-2024 JetBrains s.r.o. and contributors. Use of this source code is governed by the Apache 2.0 license.
 package com.intellij.execution.junit.codeInspection
 
 import com.intellij.junit.testFramework.JUnitMalformedDeclarationInspectionTestBase
@@ -519,6 +519,69 @@ class KotlinJUnitMalformedDeclarationInspectionTest {
         
         fun a(): Array<String> { return arrayOf("a", "b") }
       }        
+    """.trimIndent())
+    }
+    fun `test malformed parameterized method source external class highlighting`() {
+      myFixture.testHighlighting(
+        JvmLanguage.KOTLIN, """
+      package com.intellij.testframework.ext;
+      
+      import org.junit.jupiter.params.ParameterizedTest
+      import org.junit.jupiter.params.provider.MethodSource
+      import java.util.stream.Stream
+      
+      class ValueSourcesTest {
+          @ParameterizedTest
+          @MethodSource("a")
+          fun companion(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource("com.intellij.testframework.ext.ValueSourcesTest#a")
+          fun companionClass(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource(<error descr="Method source 'b' in external class must be referenced by fully-qualified method name">"b"</error>)
+          fun nested(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource(<error descr="Method source 'b' in external class must be referenced by fully-qualified method name">"com.intellij.testframework.ext.ValueSourcesTest#b"</error>)
+          fun nestedClass(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource("com.intellij.testframework.ext.ValueSourcesTest\${'$'}NestedClass#b")
+          fun nestedClassFull(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource(<error descr="Cannot resolve target method source: 'c'">"c"</error>)
+          fun nestedNested(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource(<error descr="Cannot resolve target method source: 'com.intellij.testframework.ext.ValueSourcesTest#c'">"com.intellij.testframework.ext.ValueSourcesTest#c"</error>)
+          fun nestedNestedClass(param: String) { }
+ 
+          @ParameterizedTest
+          @MethodSource(<error descr="Method source 'c' in external class must be referenced by fully-qualified method name">"com.intellij.testframework.ext.ValueSourcesTest\${'$'}NestedClass#c"</error>)
+          fun nestedNestedClassNotFull(param: String) { }
+
+          @ParameterizedTest
+          @MethodSource("com.intellij.testframework.ext.ValueSourcesTest\${'$'}NestedClass\${'$'}NestedNested#c")
+          fun nestedNestedClassFull(param: String) { }
+
+          companion object {
+              @JvmStatic
+              fun a(): Stream<String> { return Stream.of("a", "b") }
+          }
+
+          object NestedClass {
+              @JvmStatic
+              fun b(): Stream<String> { return Stream.of("a", "b") }
+
+              object NestedNested {
+                  @JvmStatic
+                  fun c(): Stream<String> { return Stream.of("a", "b") }
+              }
+          }
+      }
     """.trimIndent())
     }
     fun `test malformed parameterized method source should have no parameters`() {
